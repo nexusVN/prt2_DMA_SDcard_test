@@ -243,7 +243,7 @@ void set_max_speed(void)
 //    }
     if(i > 10000000)
       {
-          i = 10000000;
+          i = 2000000;
       }
     /* Configure the SSI0 port to run at 12.5MHz */
     ROM_SSIConfigSetExpClk(SDC_SSI_BASE, ROM_SysCtlClockGet(),

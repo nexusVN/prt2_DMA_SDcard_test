@@ -148,6 +148,7 @@ struct{
 	unsigned char dataRxAvail;
 	unsigned int lastData;
 	unsigned int indexCount;
+	unsigned char readDone;
 }FlagSSI;
 
 #define SSI_ID_CONFIG 1
@@ -169,6 +170,9 @@ unsigned char SSITimer=0;
 #pragma DATA_ALIGN(pui8ControlTable, 1024)
 uint8_t pui8ControlTable[1024];
 
+#define UART_RXBUF_SIZE         512
+static uint8_t g_pui8RxPing[UART_RXBUF_SIZE];
+
 // Define errors counters
 static uint32_t g_ui32DMAErrCount = 0;
 static uint32_t g_ui32BadISR = 0;
@@ -186,55 +190,48 @@ void DMA_init(void){
 	//
 	// Enable Peripheral Clocks
 	//
-
-
 }
 
 
 void SSI_DMA_init(){
 
 
-	SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
-	SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+//		SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
+//		SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+//
+//		//
+//		// Enable pin PA4 for SSI0 SSI0RX
+//		//
+//		GPIOPinConfigure(GPIO_PA4_SSI0RX);
+//		GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_4);
+//
+//		//
+//		// Enable pin PA2 for SSI0 SSI0CLK
+//		//
+//		GPIOPinConfigure(GPIO_PA2_SSI0CLK);
+//		GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_2);
+//
+//		//
+//		// Enable pin PA3 for SSI0 SSI0FSS
+//		//
+//		GPIOPinConfigure(GPIO_PA3_SSI0FSS);
+//		GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_3);
+//
+//		//
+//		// Enable pin PA5 for SSI0 SSI0TX
+//		//
+//		GPIOPinConfigure(GPIO_PA5_SSI0TX);
+//		GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_5);
+//
+//		SSIConfigSetExpClk(SSI0_BASE,SysCtlClockGet(),SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,2000000,8);
+//	//
+//	// Enable the SSI module.
+//		SSIEnable(SSI0_BASE);
 
-	//
-	// Enable pin PA4 for SSI0 SSI0RX
-	//
-	GPIOPinConfigure(GPIO_PA4_SSI0RX);
-	GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_4);
-
-	//
-	// Enable pin PA2 for SSI0 SSI0CLK
-	//
-	GPIOPinConfigure(GPIO_PA2_SSI0CLK);
-	GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_2);
-
-	//
-	// Enable pin PA3 for SSI0 SSI0FSS
-	//
-	GPIOPinConfigure(GPIO_PA3_SSI0FSS);
-	GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_3);
-
-	//
-	// Enable pin PA5 for SSI0 SSI0TX
-	//
-	GPIOPinConfigure(GPIO_PA5_SSI0TX);
-	GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_5);
-
-	//
-	//
-	//
-
-	SSIConfigSetExpClk(SSI0_BASE,SysCtlClockGet(),SSI_FRF_MOTO_MODE_0,SSI_MODE_MASTER,2000000,8);
-	//
-	// Enable the SSI module.
-	//	SSI0_CR1_R|=SSI_CR1_EOT;
-	//		SSIIntEnable(SSI0_BASE,SSI_TXFF);
-	SSIEnable(SSI0_BASE);
 	IntMasterEnable(); //enable processor interrupts
 	IntEnable(INT_SSI0); //enable the SSI0 interrupt
 
-	SSIDMAEnable(SSI0_BASE,SSI_DMA_TX);
+
 
 	// Place the uDMA channel attributes in a known state. These should already be disabled by default.
 	ROM_uDMAChannelAttributeEnable(UDMA_CHANNEL_SSI0TX, UDMA_ATTR_USEBURST);
@@ -243,12 +240,24 @@ void SSI_DMA_init(){
 			UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_DST_INC_NONE |
 			UDMA_ARB_4);
 
+	ROM_uDMAChannelControlSet(UDMA_CHANNEL_SSI0RX | UDMA_PRI_SELECT,
+			UDMA_SIZE_8 | UDMA_SRC_INC_NONE | UDMA_SRC_INC_8 |
+			UDMA_ARB_1);
+
 	ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
 			UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
-			10);
-	ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+			512);
+
+	ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0RX | UDMA_PRI_SELECT,
+			UDMA_MODE_BASIC,(void *)(SSI0_BASE +SSI_O_DR),g_pui8RxPing,
+			512);
+
+//		SSIDMAEnable(SSI0_BASE,SSI_DMA_TX|SSI_DMA_RX);
+//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0RX);
 
 }
+
 void
 uDMAErrorHandler(void)
 {
@@ -266,19 +275,46 @@ uDMAErrorHandler(void)
 }
 
 void SSI0_Interrupt_Handler(void){
-	uint32_t interrupt_status = ROM_SSIIntStatus(SSI0_BASE,1);
-	SSIIntClear(SSI0_BASE, interrupt_status);
+	//	uint32_t interrupt_status = ROM_SSIIntStatus(SSI0_BASE,1);
+	//	SSIIntClear(SSI0_BASE, interrupt_status);
+	//
+	//	uint32_t ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT);
 
-	uint32_t ui32Mode = ROM_uDMAChannelModeGet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT);
+	//	if(!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0TX))
+	//	{
+	//		ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+	//				UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
+	//				10);
+	//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+	//	}
 
-	if(!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0TX))
-	{
-//		ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
-//				UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
-//				10);
-//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+	//	if(!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0TX)){
+	//		toggle_led[0]^=1;
+	//		led(LED_RED,toggle_led[0]);
+	//	}
+	//
+	if(!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0RX)){
+
+		FlagSSI.readDone=1;
+		toggle_led[0]^=1;
+		led(LED_RED,toggle_led[0]);
 
 	}
+
+
+
+
+
+	if(ROM_uDMAChannelModeGet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT)==UDMA_MODE_STOP){
+//		ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+//					UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
+//					10);
+//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+	}
+
+
+
+
 }
 
 
@@ -292,40 +328,37 @@ void main(){
 	Timer0_init();
 	SysTick_Init();
 	UART0_Init();
-
 	//	SSI_init();
 	//	UART3_Init();
 	//	UART5_Init();
 	//	UART1_Init();
-
-
-	//	SerialPutStrLn(UART_PC_,"init SD card ...");
-	//	unsigned char status=disk_initialize(0);
-	//	while(status!=0){
-	//		status=disk_initialize (0);
-	//		switch(status)
-	//		{
-	//		case STA_NOINIT:
-	//			SerialPutStrLn(UART_PC_,"init fail");
-	//			break;
-	//		case STA_NODISK:
-	//			SerialPutStrLn(UART_PC_," no disk");
-	//			break;
-	//		case STA_PROTECT:
-	//			SerialPutStrLn(UART_PC_,"protected SD");
-	//			break;
-	//		default:
-	//			break;
-	//		}
-	//	}
-	//	SerialPutStrLn(UART_PC_,"init successful");
+	SerialPutStrLn(UART_PC_,"init SD card ...");
+	unsigned char status=disk_initialize(0);
+	while(status!=0){
+		status=disk_initialize (0);
+		switch(status)
+		{
+		case STA_NOINIT:
+			SerialPutStrLn(UART_PC_,"init fail");
+			break;
+		case STA_NODISK:
+			SerialPutStrLn(UART_PC_," no disk");
+			break;
+		case STA_PROTECT:
+			SerialPutStrLn(UART_PC_,"protected SD");
+			break;
+		default:
+			break;
+		}
+	}
+	SerialPutStrLn(UART_PC_,"init successful");
 	DMA_init();
 	SSI_DMA_init();
 
 	SerialPutStrLn(UART_PC_,"config done!");
 	FlagSSI.enable=1;
 	FlagSSI.ID=SSI_ID_CONFIG;
-//	SysCtlDelay(SysCtlClockGet()/3/100);
+	SysCtlDelay(SysCtlClockGet()/3/100);
 	while(1)
 	{
 		//						disk_read(0,SDbuff,57350+8192,1);
@@ -338,16 +371,16 @@ void main(){
 		task_20Hz();
 		task_50Hz();
 		task_100Hz();
-		//		task_SSI();
-		//		while((SSI0_SR_R&SSI_SR_RNE)==SSI_SR_RNE)
-		//		{
-		//			if(SSIDataGetNonBlocking(SSI0_BASE, &FlagSSI.lastData)){
-		//				FlagSSI.dataRxAvail=1;
-		//				numofRX_TX--;
-		//				//				toggle_led[0]^=1;
-		//				//				led(LED_RED,toggle_led[0]);
-		//			}
-		//		}
+		task_SSI();
+		if(FlagSSI.ID!=SSI_ID_READ_GET){
+			while((SSI0_SR_R&SSI_SR_RNE)==SSI_SR_RNE)
+			{
+				if(SSIDataGetNonBlocking(SSI0_BASE, &FlagSSI.lastData)){
+					FlagSSI.dataRxAvail=1;
+					numofRX_TX--;
+				}
+			}
+		}
 	}
 }
 struct{
@@ -361,7 +394,7 @@ void task_SSI(){
 		switch (FlagSSI.ID){
 		case SSI_ID_IDLE:
 			//			FlagSSI.enable=0;
-			FlagSSI.ID=SSI_ID_CONFIG;
+//			FlagSSI.ID=SSI_ID_CONFIG;
 			break;
 		case SSI_ID_CONFIG: //wait for ready
 			selectSSI();            /* CS = L */
@@ -374,7 +407,6 @@ void task_SSI(){
 			//sending command - waif for ready
 			// try 50 time send 0xFF, check received data;
 			// if receive 0xFF then pass, if time out and not recive 0xFF, then finish with error
-
 			if(FlagSSI.dataRxAvail){
 				FlagSSI.dataRxAvail=0;
 				if (FlagSSI.lastData==0xFF)
@@ -399,9 +431,6 @@ void task_SSI(){
 				FlagSSI.ID=SSI_ID_CMD_RESPONE;
 				SSITimer=10;
 				xmit_spi_my(0xFF);
-
-				//				toggle_led[1]^=1;
-				//				led(LED_BLUE,toggle_led[1]);
 			}
 			break;
 		case SSI_ID_CMD_RESPONE:
@@ -421,9 +450,7 @@ void task_SSI(){
 				}
 				else{
 					FlagSSI.ID=SSI_ID_READ_WFR;
-					SSITimer=100;
-					//					toggle_led[1]^=1;
-					//					led(LED_BLUE,toggle_led[1]);
+					SSITimer=200;
 					xmit_spi_my(0xFF);
 				}
 			}
@@ -437,9 +464,28 @@ void task_SSI(){
 				if (FlagSSI.lastData==0xFE)
 				{
 					FlagSSI.ID=SSI_ID_READ_GET;
-					xmit_spi_my(0xFF);
+					//					xmit_spi_my(0xFF);
 					//					toggle_led[1]^=1;
 					//					led(LED_BLUE,toggle_led[1]);
+//					ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+//							UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
+//							512);
+//					ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0RX | UDMA_PRI_SELECT,
+//							UDMA_MODE_BASIC,(void *)(SSI0_BASE +SSI_O_DR),g_pui8RxPing,
+//							512);
+					SSIDMAEnable(SSI0_BASE,SSI_DMA_TX|SSI_DMA_RX);
+					ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+							UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
+							512);
+
+					ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0RX | UDMA_PRI_SELECT,
+							UDMA_MODE_BASIC,(void *)(SSI0_BASE +SSI_O_DR),g_pui8RxPing,
+							512);
+
+					ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+					ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0RX);
+
+
 				}
 				else{
 					if(SSITimer==0)
@@ -454,15 +500,23 @@ void task_SSI(){
 		case SSI_ID_READ_GET:
 			// get all data from sector until end
 			// end process and back to IDLE
-			if(FlagSSI.dataRxAvail){
-				FlagSSI.dataRxAvail=0;
-				SDbuff[FlagSSI.indexCount++]=FlagSSI.lastData;
-				if(FlagSSI.indexCount==512)
-				{
-					FlagSSI.ID=SSI_ID_READ_END_1;
-				}
-				//toggle_led[1]^=1;
-				//led(LED_BLUE,toggle_led[1]);
+			//			if(FlagSSI.dataRxAvail){
+			//				FlagSSI.dataRxAvail=0;
+			//				SDbuff[FlagSSI.indexCount++]=FlagSSI.lastData;
+			//				if(FlagSSI.indexCount==512)
+			//				{
+			//					FlagSSI.ID=SSI_ID_READ_END_1;
+			//				}
+			//				//toggle_led[1]^=1;
+			//				//led(LED_BLUE,toggle_led[1]);
+			//				xmit_spi_my(0xFF);
+			//			}
+			if(FlagSSI.readDone){
+				FlagSSI.readDone=0;
+				FlagSSI.ID=SSI_ID_READ_END_1;
+				ROM_uDMAChannelDisable(UDMA_CHANNEL_SSI0TX);
+				ROM_uDMAChannelDisable(UDMA_CHANNEL_SSI0RX);
+				SSIDMADisable(SSI0_BASE,SSI_DMA_TX|SSI_DMA_RX);
 				xmit_spi_my(0xFF);
 			}
 			break;
@@ -519,6 +573,22 @@ void task_20Hz(){
 		//		led(LED_RED,0);
 		//		SysCtlDelay(2);
 		//		led(LED_RED,1);
+
+//		SSIDMAEnable(SSI0_BASE,SSI_DMA_TX|SSI_DMA_RX);
+//		ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+//				UDMA_MODE_BASIC, &dataTX,(void *)(SSI0_BASE +SSI_O_DR) ,
+//				512);
+//
+//		ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0RX | UDMA_PRI_SELECT,
+//				UDMA_MODE_BASIC,(void *)(SSI0_BASE +SSI_O_DR),g_pui8RxPing,
+//				512);
+//
+//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+//		ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0RX);
+
+
+
+
 	}
 }
 
